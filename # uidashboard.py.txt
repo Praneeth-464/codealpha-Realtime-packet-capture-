@@ -1,0 +1,252 @@
+# ui/dashboard.py
+
+import streamlit as st
+import threading
+import pandas as pd
+import time
+
+from capture.interface_manager import (
+    get_available_interfaces
+)
+
+from capture.sniffer import (
+    start_sniffing
+)
+
+from utils.packet_storage import (
+    get_packets,
+    clear_packets
+)
+
+from utils.capture_state import (
+
+    start_capture,
+
+    stop_capture
+
+)
+
+
+# -----------------------------------------
+# PAGE CONFIG
+# -----------------------------------------
+st.set_page_config(
+
+    page_title="Realtime Packet Analyzer",
+
+    layout="wide"
+
+)
+
+st.title("Realtime Packet Analyzer")
+
+
+# -----------------------------------------
+# SESSION STATE
+# -----------------------------------------
+if "capture_started" not in st.session_state:
+
+    st.session_state.capture_started = False
+
+
+# -----------------------------------------
+# FETCH INTERFACES
+# -----------------------------------------
+interfaces = get_available_interfaces()
+
+
+# -----------------------------------------
+# CREATE INTERFACE LIST
+# -----------------------------------------
+interface_display_list = []
+
+interface_mapping = {}
+
+
+for interface in interfaces:
+
+    description = interface["description"]
+
+    device_name = interface["name"]
+
+    active = interface["active"]
+
+    if not description:
+        continue
+
+    # -------------------------------------
+    # ACTIVE INTERFACES
+    # -------------------------------------
+    if active:
+
+        display_name = (
+            f"🟢 {description}"
+        )
+
+    # -------------------------------------
+    # INACTIVE INTERFACES
+    # -------------------------------------
+    else:
+
+        display_name = (
+            f"⚪ {description}"
+        )
+
+    interface_display_list.append(
+        display_name
+    )
+
+    interface_mapping[
+        display_name
+    ] = device_name
+
+
+# -----------------------------------------
+# FIND DEFAULT ACTIVE INTERFACE
+# -----------------------------------------
+default_index = 0
+
+for index, interface in enumerate(interfaces):
+
+    if interface["active"]:
+
+        default_index = index
+        break
+
+
+# -----------------------------------------
+# INTERFACE DROPDOWN
+# -----------------------------------------
+st.subheader(
+    "Capture Interfaces"
+)
+
+selected_interface_display = st.selectbox(
+
+    "Select Interface",
+
+    interface_display_list,
+
+    index=default_index
+
+)
+
+
+# -----------------------------------------
+# SAVE SELECTED INTERFACE
+# -----------------------------------------
+actual_interface = None
+
+if selected_interface_display:
+
+    actual_interface = interface_mapping[
+        selected_interface_display
+    ]
+
+    st.session_state[
+        "selected_interface"
+    ] = actual_interface
+
+
+# -----------------------------------------
+# CAPTURE FUNCTION
+# -----------------------------------------
+def capture_packets(interface):
+
+    start_sniffing(interface)
+
+
+# -----------------------------------------
+# BUTTONS
+# -----------------------------------------
+col1, col2 = st.columns(2)
+
+
+# -----------------------------------------
+# START BUTTON
+# -----------------------------------------
+with col1:
+
+    if st.button("Start Packet Capture"):
+
+        if not st.session_state.capture_started:
+
+            st.session_state.capture_started = True
+
+            # Start capture engine
+            start_capture()
+
+            # Clear old packets
+            clear_packets()
+
+            # Start background thread
+            capture_thread = threading.Thread(
+
+                target=capture_packets,
+
+                args=(actual_interface,),
+
+                daemon=True
+
+            )
+
+            capture_thread.start()
+
+            st.success(
+                "Packet Capture Started"
+            )
+
+
+# -----------------------------------------
+# STOP BUTTON
+# -----------------------------------------
+with col2:
+
+    if st.button("Stop Capture"):
+
+        # Stop capture engine
+        stop_capture()
+
+        st.session_state.capture_started = False
+
+        st.warning(
+            "Packet Capture Stopped"
+        )
+
+
+# -----------------------------------------
+# LIVE PACKET DISPLAY
+# -----------------------------------------
+st.subheader("Live Packet Flow")
+
+
+packets = get_packets()
+
+
+if len(packets) > 0:
+
+    df = pd.DataFrame(packets)
+
+    st.dataframe(
+
+        df,
+
+        width="stretch"
+
+    )
+
+else:
+
+    st.info(
+        "No Packets Captured Yet"
+    )
+
+
+# -----------------------------------------
+# AUTO REFRESH
+# -----------------------------------------
+if st.session_state.capture_started:
+
+    time.sleep(1)
+
+    st.rerun()
